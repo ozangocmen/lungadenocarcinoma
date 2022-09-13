@@ -1,0 +1,156 @@
+---
+title: "Early Lung Adenocarcinoma Single Cell RNA Sequencing Data Analysis"
+author: "Ozan"
+date: "2022-09-12"
+output: html_document
+bibliography: references.bib
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Pre-process for creating Seurat object
+
+Analysis source is originated from "*Innate Immune Landscape in Early Lung Adenocarcinoma by Paired Single-Cell Analyses*" study. GEO accession: [**GSE97168**](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE97168)
+
+Using singlet, CD45+ DAPI- CD3-CD19- gating, over 1100 cells from a human stage IA lung adenocarcinoma lesion and over 700 cells from the non-involved lung were sorted into individual wells of a 384-well plate, then processed by MARS-Seq.
+
+[@Lavin2017]
+
+That study contain 2 supplementary files:
+
+1.  metadata
+
+2.  umitab
+
+Umitab is a type of gene expresion matrix and metadata has "well", "Amp_batch_ID", "Seq_batch_ID", "well_coordinates", "plate_ID", "Pool_barcode", "Cell_barcode", "Number_of_cells" information.
+
+```{r}
+library(Seurat)
+library(tidyverse)
+library(patchwork)
+```
+
+```{r}
+load("C:/Users/OZAN/Desktop/bioinformatics/Lung cancer CAR T gene therapy/analysis/2/lung_adenocarcinoma/env_final.RData")
+```
+
+## QC and selecting cells for further analysis
+
+```{r}
+adenocar
+```
+
+**NOTE:** *There is no information about mitochondrial RNA abundance in Seurat object*
+
+```{r}
+plot1 <- FeatureScatter(adenocar, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(adenocar, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2
+```
+
+# Normalizing the data
+
+```{r}
+adenocar <- NormalizeData(adenocar, normalization.method = "LogNormalize", scale.factor = 10000)
+```
+
+# Identification of highly variable features (feature selection)
+
+```{r}
+adenocar <- FindVariableFeatures(adenocar, selection.method = "vst", nfeatures = 2000)
+
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(adenocar), 10)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(adenocar)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot1 + plot2
+```
+
+# Scaling the data
+
+```{r}
+adenocar <- ScaleData(adenocar)
+```
+
+# Perform linear dimensional reduction
+
+```{r}
+adenocar <- RunPCA(adenocar, features = VariableFeatures(object = adenocar))
+```
+
+```{r}
+# Examine and visualize PCA results a few different ways
+print(adenocar[["pca"]], dims = 1:5, nfeatures = 5)
+```
+
+```{r}
+VizDimLoadings(adenocar, dims = 1:2, reduction = "pca")
+```
+
+```{r}
+DimPlot(adenocar, reduction = "pca")
+```
+
+```{r}
+DimHeatmap(adenocar, dims = 1, cells = 500, balanced = TRUE)
+DimHeatmap(adenocar, dims = 1:15, cells = 500, balanced = TRUE)
+```
+
+# Determine the 'dimensionality' of the dataset
+
+```{r}
+ElbowPlot(adenocar)
+```
+
+# Cluster the cells
+
+```{r}
+adenocar<- FindNeighbors(adenocar, dims = 1:16)
+adenocar <- FindClusters(adenocar, resolution = 0.5)
+```
+
+```{r}
+# Look at cluster IDs of the first 5 cells
+head(Idents(adenocar), 5)
+```
+
+# Run non-linear dimensional reduction (UMAP/tSNE)
+
+```{r}
+# If you haven't installed UMAP, you can do so via reticulate::py_install(packages =
+# 'umap-learn')
+adenocar <- RunUMAP(adenocar, dims = 1:16)
+# note that you can set `label = TRUE` or use the LabelClusters function to help label
+# individual clusters
+DimPlot(adenocar, reduction = "umap")
+```
+
+# Finding differentially expressed features (cluster biomarkers)
+
+```{r}
+# find markers for every cluster compared to all remaining cells, report only the positive
+# ones
+adenocar.markers <- FindAllMarkers(adenocar, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+adenocar.markers %>%
+    group_by(cluster) %>%
+    slice_max(n = 2, order_by = avg_log2FC)
+```
+
+```{r}
+adenocar.markers %>%
+    group_by(cluster) %>%
+    top_n(n = 10, wt = avg_log2FC) -> top10
+DoHeatmap(adenocar, features = top10$gene) + NoLegend()
+```
+
+```{r}
+sessionInfo()
+```
+
+```{r}
+saveRDS(adenocar, file = "adenocar.rds")
+```
